@@ -1,7 +1,7 @@
 name: Areas (offline maps)
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  # schedule:
+  #   - cron: '*/5 * * * *'   # enabled after the owner's Cloud Shell step (Workload Identity for this repo)
   workflow_dispatch:
 permissions:
   contents: write
