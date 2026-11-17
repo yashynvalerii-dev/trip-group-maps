@@ -1,0 +1,69 @@
+name: Areas (offline maps)
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: areas
+  cancel-in-progress: false
+jobs:
+  areas:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Self-test
+        run: node scripts/check-areas.mjs
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/776539599245/locations/global/workloadIdentityPools/github/providers/trip-group-gh
+          service_account: trip-maps-worker@tripgroup.iam.gserviceaccount.com
+          token_format: access_token
+      - name: Install pmtiles CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download --repo protomaps/go-pmtiles --pattern '*Linux_x86_64.tar.gz' --dir /tmp/pmt
+          tar -xzf /tmp/pmt/*.tar.gz -C /tmp/pmt
+          sudo install /tmp/pmt/pmtiles /usr/local/bin/pmtiles
+          pmtiles version || true
+      - name: Prepare site (gh-pages)
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch --depth 1 origin gh-pages
+            git --work-tree=site checkout origin/gh-pages -- . || true
+            git reset -q
+          fi
+      - name: Process areas
+        env:
+          FIRESTORE_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: node scripts/areas.mjs
+      - name: Publish (single-commit gh-pages)
+        run: |
+          set -euo pipefail
+          if [ ! -f site/.changed ]; then echo "nothing to publish"; exit 0; fi
+          rm -f site/.changed
+          cd site
+          git init -q -b gh-pages
+          git config user.name "trip-group-maps"
+          git config user.email "trip-group-maps@users.noreply.github.com"
+          touch .nojekyll
+          git add -A
+          git commit -q -m "areas $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
+      - name: Mark ready (after Pages has the files)
+        env:
+          FIRESTORE_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          if [ -s /tmp/areas-updates.json ] && [ "$(cat /tmp/areas-updates.json)" != "[]" ]; then sleep 75; fi
+          node scripts/areas.mjs --finalize

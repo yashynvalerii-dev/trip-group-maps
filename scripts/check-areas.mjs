@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import { circle, triage, expiresAt, LIMITS } from './areas.mjs';
+const c = circle(50.98, 11.03, 10);
+const ring = c.geometry.coordinates[0];
+assert.equal(ring.length, 65); assert.deepEqual(ring[0], ring[64], 'closed ring');
+const north = Math.max(...ring.map(p => p[1])); assert.ok(Math.abs((north - 50.98) * 110.574 - 10) < 0.05, '10 km north');
+const now = 1e12, H = 3600000;
+const A = (id, o) => ({ id, gid: 'G', requestedBy: 'U', requestedAt: now - H, radiusKm: 10, status: 'requested', ...o });
+let r = triage([A('a'), A('b', { radiusKm: 30 })], now);
+assert.deepEqual(r.build.map(x => x.id), ['a']); assert.equal(r.reject[0].reason, 'radius');
+const ready = Array.from({ length: LIMITS.activePerGroup }, (_, i) => A('r' + i, { status: 'ready', requestedAt: now - 3 * 86400000 }));
+r = triage([...ready, A('x')], now); assert.equal(r.reject[0].reason, 'limit-group');
+const today = Array.from({ length: LIMITS.ordersPerDay }, (_, i) => A('t' + i, { gid: 'G' + i, status: 'ready' }));
+r = triage([...today, A('y', { gid: 'Z' })], now); assert.equal(r.reject[0].reason, 'limit-day');
+assert.equal(expiresAt({ builtAt: 10, usedAt: 20 }), 20 + 30 * 86400000);
+console.log('check-areas OK');
